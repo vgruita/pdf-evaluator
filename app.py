@@ -1,6 +1,8 @@
 import streamlit as st
 import pymupdf  # PyMuPDF
 import ollama
+from ollama import AsyncClient
+import asyncio
 import base64
 import gc
 import os
@@ -48,10 +50,10 @@ def get_base64_image(page):
     img_bytes = pix.tobytes("png")
     return base64.b64encode(img_bytes).decode("utf-8")
 
-def extract_text_with_vision(base64_image):
+async def extract_text_with_vision(base64_image):
     prompt = "Extract all text and data from this image cleanly. If there are tables, format them using Markdown. If there are charts, describe them in detail."
     try:
-        response = ollama.chat(
+        response = await AsyncClient().chat(
             model=VISION_MODEL, 
             messages=[{'role': 'user', 'content': prompt, 'images': [base64_image]}],
             options={"temperature": 0.0, "num_predict": 4096}
@@ -63,13 +65,13 @@ def extract_text_with_vision(base64_image):
         st.error(f"Vision extraction failed: {e}")
         return ""
 
-def generate_rag_answer(criteria, context_chunks):
+async def generate_rag_answer(criteria, context_chunks):
     system_instruction = "You are an expert analyst. Answer the user's prompt based ONLY on the provided excerpts from the documents. Output valid Markdown."
     context_str = "\n\n---\n\n".join(context_chunks)
     prompt = f"Answer the following User Prompt using the provided Excerpts.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
     
     try:
-        response = ollama.chat(
+        response = await AsyncClient().chat(
             model=SYNTHESIS_MODEL, 
             messages=[
                 {'role': 'system', 'content': system_instruction},
@@ -120,12 +122,15 @@ def process_document_pages(doc_id, doc_dir, pdf_path, total_pages, filename):
         native_text = page.get_text()
         
         # SMART ROUTING
-        if len(native_text.strip()) > 50:
-            final_text = native_text
-        else:
+        text_len = len(native_text.strip())
+        num_images = len(page.get_images())
+        
+        if (num_images > 0 and text_len < 300) or text_len <= 50:
             base64_image = get_base64_image(page)
-            final_text = extract_text_with_vision(base64_image)
+            final_text = asyncio.run(extract_text_with_vision(base64_image))
             del base64_image
+        else:
+            final_text = native_text
             
         # Store in ChromaDB
         if final_text.strip():
@@ -204,7 +209,7 @@ def create_evaluation(prompt, selected_docs_meta):
     for chunk, m in zip(retrieved_chunks, retrieved_meta):
         formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
         
-    final_answer = generate_rag_answer(prompt, formatted_chunks)
+    final_answer = asyncio.run(generate_rag_answer(prompt, formatted_chunks))
     
     final_report = f"# Evaluation Results\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
     for m in retrieved_meta:
