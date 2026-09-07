@@ -16,3 +16,6 @@ env/
 
 # Ignore PDFs testing data
 *.pdf
+data/
+__pycache__/
+*.pdf
