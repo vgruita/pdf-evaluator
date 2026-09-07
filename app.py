@@ -62,7 +62,9 @@ async def extract_text_with_vision(base64_image):
             raise Exception(response['error'])
         return response.get('message', {}).get('content', '')
     except Exception as e:
-        st.error(f"Vision extraction failed: {e}")
+        error_msg = f"Vision extraction failed: {e}"
+        print(f"[{VISION_MODEL}] ERROR: {error_msg}")
+        st.error(error_msg)
         return ""
 
 async def generate_rag_answer(criteria, context_chunks):
@@ -83,7 +85,9 @@ async def generate_rag_answer(criteria, context_chunks):
             raise Exception(response['error'])
         return response.get('message', {}).get('content', '')
     except Exception as e:
-        raise Exception(f"Model error during synthesis: {e}")
+        error_msg = f"Model error during synthesis: {e}"
+        print(f"[{SYNTHESIS_MODEL}] ERROR: {error_msg}")
+        raise Exception(error_msg)
 
 # --- DOCUMENT INGESTION (STAGE 1) ---
 
@@ -104,6 +108,7 @@ def ingest_document(uploaded_file):
         "doc_id": doc_id,
         "filename": uploaded_file.name,
         "total_pages": total_pages,
+        "processed_pages": 0,
         "ingestion_status": "Processing"
     }
     with open(os.path.join(doc_dir, "doc_meta.json"), "w", encoding="utf-8") as f:
@@ -115,6 +120,7 @@ def process_document_pages(doc_id, doc_dir, pdf_path, total_pages, filename):
     doc = pymupdf.open(pdf_path)
     progress_bar = st.progress(0)
     status_text = st.empty()
+    successfully_imported = 0
     
     for i in range(total_pages):
         status_text.text(f"Ingesting page {i+1}/{total_pages}...")
@@ -139,6 +145,15 @@ def process_document_pages(doc_id, doc_dir, pdf_path, total_pages, filename):
                 metadatas=[{"doc_id": doc_id, "filename": filename, "page": i+1}],
                 ids=[f"{doc_id}_page_{i+1}"]
             )
+            successfully_imported += 1
+            
+        # Update metadata to track real-time partial progress
+        meta_path = os.path.join(doc_dir, "doc_meta.json")
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["processed_pages"] = successfully_imported
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=4)
             
         del page
         del native_text
@@ -263,16 +278,20 @@ def main():
         render_evaluations_dashboard()
 
 def render_document_library():
+    if "uploader_key" not in st.session_state:
+        st.session_state.uploader_key = 0
+
     st.header("Upload & Ingest New Document")
     st.write("Documents uploaded here will be processed page-by-page. Native text is extracted instantly. Scanned pages are read by `llama3.2-vision`. Everything is indexed into the local Vector Database.")
     
-    uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"])
+    uploaded_file = st.file_uploader("Upload PDF Document", type=["pdf"], key=f"uploader_{st.session_state.uploader_key}")
     if st.button("Ingest Document"):
         if uploaded_file:
             doc_id, doc_dir, pdf_path, total_pages = ingest_document(uploaded_file)
             st.info(f"Starting ingestion for {uploaded_file.name} ({total_pages} pages). This may take a while if vision extraction is heavily used...")
             process_document_pages(doc_id, doc_dir, pdf_path, total_pages, uploaded_file.name)
             st.success("Document ingested and vectorized successfully!")
+            st.session_state.uploader_key += 1
             st.rerun()
         else:
             st.warning("Please select a PDF file first.")
@@ -286,7 +305,7 @@ def render_document_library():
         for doc in docs:
             col1, col2, col3, col4 = st.columns([3, 2, 2, 2])
             col1.write(f"📄 **{doc['filename']}**")
-            col2.write(f"Pages: {doc['total_pages']}")
+            col2.write(f"Pages: {doc.get('processed_pages', 0)} / {doc['total_pages']} imported")
             status = doc.get('ingestion_status', 'Unknown')
             col3.write(f"Status: {status}")
             if col4.button("Delete", key=f"del_doc_{doc['doc_id']}"):
