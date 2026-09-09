@@ -9,8 +9,12 @@ import os
 import json
 import uuid
 import shutil
+import logging
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+
+# Suppress noisy "Invalid HTTP request received." warnings from Tornado (used by Streamlit)
+logging.getLogger("tornado.general").setLevel(logging.ERROR)
 
 st.set_page_config(page_title="Multi-Document RAG Evaluator", layout="wide")
 
@@ -27,6 +31,9 @@ for d in [DOCS_DIR, EVALS_DIR, CHROMA_DIR]:
         os.makedirs(d)
 
 class OllamaEmbeddingFunction(EmbeddingFunction):
+    def __init__(self):
+        pass
+        
     def __call__(self, input: Documents) -> Embeddings:
         embeddings = []
         for text in input:
@@ -50,10 +57,10 @@ def get_base64_image(page):
     img_bytes = pix.tobytes("png")
     return base64.b64encode(img_bytes).decode("utf-8")
 
-async def extract_text_with_vision(base64_image):
+def extract_text_with_vision(base64_image):
     prompt = "Extract all text and data from this image cleanly. If there are tables, format them using Markdown. If there are charts, describe them in detail."
     try:
-        response = await AsyncClient().chat(
+        response = ollama.chat(
             model=VISION_MODEL, 
             messages=[{'role': 'user', 'content': prompt, 'images': [base64_image]}],
             options={"temperature": 0.0, "num_predict": 4096}
@@ -67,13 +74,13 @@ async def extract_text_with_vision(base64_image):
         st.error(error_msg)
         return ""
 
-async def generate_rag_answer(criteria, context_chunks):
+def generate_rag_answer(criteria, context_chunks):
     system_instruction = "You are an expert analyst. Answer the user's prompt based ONLY on the provided excerpts from the documents. Output valid Markdown."
     context_str = "\n\n---\n\n".join(context_chunks)
     prompt = f"Answer the following User Prompt using the provided Excerpts.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
     
     try:
-        response = await AsyncClient().chat(
+        response = ollama.chat(
             model=SYNTHESIS_MODEL, 
             messages=[
                 {'role': 'system', 'content': system_instruction},
@@ -133,7 +140,7 @@ def process_document_pages(doc_id, doc_dir, pdf_path, total_pages, filename):
         
         if (num_images > 0 and text_len < 300) or text_len <= 50:
             base64_image = get_base64_image(page)
-            final_text = asyncio.run(extract_text_with_vision(base64_image))
+            final_text = extract_text_with_vision(base64_image)
             del base64_image
         else:
             final_text = native_text
@@ -224,7 +231,7 @@ def create_evaluation(prompt, selected_docs_meta):
     for chunk, m in zip(retrieved_chunks, retrieved_meta):
         formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
         
-    final_answer = asyncio.run(generate_rag_answer(prompt, formatted_chunks))
+    final_answer = generate_rag_answer(prompt, formatted_chunks)
     
     final_report = f"# Evaluation Results\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
     for m in retrieved_meta:
