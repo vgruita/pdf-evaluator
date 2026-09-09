@@ -1,0 +1,72 @@
+2026-09-09 15:01:13,650 [ERROR] asyncio: Task exception was never retrieved
+future: <Task finished name='Task-1475' coro=<IocpProactor.accept.<locals>.accept_coro() done, defined at C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py:564> exception=OSError(22, 'The specified network name is no longer available', None, 64, None)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 567, in accept_coro
+    await future
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 807, in _poll
+    value = callback(transferred, key, ov)
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 556, in finish_accept
+    ov.getresult()
+    ~~~~~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+2026-09-09 15:01:13,678 [ERROR] asyncio: Accept failed on a socket
+socket: <asyncio.TransportSocket fd=752, family=23, type=1, proto=0, laddr=('::', 8501, 0, 0)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\proactor_events.py", line 840, in loop
+    conn, addr = f.result()
+                 ~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+2026-09-09 15:24:16,286 [INFO] __main__: Processing task for eval_id: 9aaeb834-cf0f-45dd-a3f8-5f8d8fca84ff
+2026-09-09 15:24:19,810 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/embeddings "HTTP/1.1 200 OK"
+2026-09-09 15:24:20,072 [INFO] __main__: [mistral:latest] A inceput generarea raspunsului (asta poate dura mult)...
+2026-09-09 16:00:09,673 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/chat "HTTP/1.1 200 OK"
+2026-09-09 16:00:09,674 [INFO] __main__: [mistral:latest] Raspuns primit cu succes in 2149.60 secunde.
+2026-09-09 16:00:09,676 [INFO] __main__: Task completed for eval_id: 9aaeb834-cf0f-45dd-a3f8-5f8d8fca84ff
+2026-09-09 16:35:19,271 [INFO] __main__: Processing task for eval_id: 8dbd7ef9-856a-49e0-989d-5634fc9d7f27
+2026-09-09 16:35:22,482 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/embeddings "HTTP/1.1 200 OK"
+2026-09-09 16:35:22,783 [INFO] __main__: [mistral:latest] A inceput generarea raspunsului (asta poate dura mult)...
+2026-09-09 16:39:21,072 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/chat "HTTP/1.1 200 OK"
+2026-09-09 16:39:21,073 [INFO] __main__: [mistral:latest] Raspuns primit cu succes in 238.29 secunde.
+2026-09-09 16:39:21,075 [INFO] __main__: Task completed for eval_id: 8dbd7ef9-856a-49e0-989d-5634fc9d7f27
+2026-09-09 16:54:30,379 [INFO] __main__: Processing task for eval_id: 65464a5c-b611-4e5b-a7c8-f0a017cb9e1b
+2026-09-09 16:54:32,946 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/embeddings "HTTP/1.1 200 OK"
+2026-09-09 16:54:32,953 [INFO] __main__: [mistral:latest] A inceput generarea raspunsului (asta poate dura mult)...
+2026-09-09 16:58:44,467 [INFO] httpx: HTTP Request: POST http://127.0.0.1:11434/api/chat "HTTP/1.1 200 OK"
+2026-09-09 16:58:44,468 [INFO] __main__: [mistral:latest] Raspuns primit cu succes in 251.51 secunde.
+2026-09-09 16:58:44,470 [INFO] __main__: Task completed for eval_id: 65464a5c-b611-4e5b-a7c8-f0a017cb9e1b
+2026-09-09 17:25:19,870 [ERROR] asyncio: Task exception was never retrieved
+future: <Task finished name='Task-8408' coro=<IocpProactor.accept.<locals>.accept_coro() done, defined at C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py:564> exception=OSError(22, 'The specified network name is no longer available', None, 64, None)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 567, in accept_coro
+    await future
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 807, in _poll
+    value = callback(transferred, key, ov)
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 556, in finish_accept
+    ov.getresult()
+    ~~~~~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+2026-09-09 17:25:19,905 [ERROR] asyncio: Accept failed on a socket
+socket: <asyncio.TransportSocket fd=536, family=23, type=1, proto=0, laddr=('::', 8501, 0, 0)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\proactor_events.py", line 840, in loop
+    conn, addr = f.result()
+                 ~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+2026-09-09 18:55:34,906 [ERROR] asyncio: Task exception was never retrieved
+future: <Task finished name='Task-4253' coro=<IocpProactor.accept.<locals>.accept_coro() done, defined at C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py:564> exception=OSError(22, 'The specified network name is no longer available', None, 64, None)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 567, in accept_coro
+    await future
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 807, in _poll
+    value = callback(transferred, key, ov)
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\windows_events.py", line 556, in finish_accept
+    ov.getresult()
+    ~~~~~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available
+2026-09-09 18:55:34,908 [ERROR] asyncio: Accept failed on a socket
+socket: <asyncio.TransportSocket fd=712, family=23, type=1, proto=0, laddr=('::', 8501, 0, 0)>
+Traceback (most recent call last):
+  File "C:\Users\vgrui\AppData\Local\Python\pythoncore-3.14-64\Lib\asyncio\proactor_events.py", line 840, in loop
+    conn, addr = f.result()
+                 ~~~~~~~~^^
+OSError: [WinError 64] The specified network name is no longer available

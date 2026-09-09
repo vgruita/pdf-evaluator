@@ -3,6 +3,14 @@ import pymupdf  # PyMuPDF
 import ollama
 from ollama import AsyncClient
 import asyncio
+import sys
+import warnings
+
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", category=DeprecationWarning)
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import base64
 import gc
 import os
@@ -13,6 +21,9 @@ import logging
 import sys
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
+import queue
+import threading
+import time
 
 # Configurare sistem de logare pentru a scrie atat in fisier cat si pe ecran
 logging.basicConfig(
@@ -66,6 +77,45 @@ collection = chroma_client.get_or_create_collection(
     embedding_function=OllamaEmbeddingFunction()
 )
 
+@st.cache_resource
+def get_task_queue():
+    q = queue.Queue()
+    def worker():
+        while True:
+            task = q.get()
+            if task is None:
+                break
+            try:
+                process_evaluation_task(task)
+            except Exception as e:
+                logger.error(f"Worker thread error: {e}")
+            finally:
+                q.task_done()
+                
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+    
+    if os.path.exists(EVALS_DIR):
+        for folder in os.listdir(EVALS_DIR):
+            meta_path = os.path.join(EVALS_DIR, folder, "eval_meta.json")
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    if meta.get("status") == "In Progress":
+                        logger.info(f"Reluam task-ul neterminat: {meta['eval_id']}")
+                        q.put({
+                            "eval_id": meta["eval_id"],
+                            "prompt": meta["prompt"],
+                            "docs": meta.get("docs", [])
+                        })
+                except Exception as e:
+                    logger.error(f"Eroare la incarcarea persistentei: {e}")
+                    
+    return q
+
+task_queue = get_task_queue()
+
 def get_base64_image(page):
     pix = page.get_pixmap(dpi=150)
     img_bytes = pix.tobytes("png")
@@ -89,9 +139,18 @@ def extract_text_with_vision(base64_image):
         return ""
 
 def generate_rag_answer(criteria, context_chunks):
-    system_instruction = "You are an expert analyst. Answer the user's prompt based ONLY on the provided excerpts from the documents. Output valid Markdown."
+    system_instruction = (
+        "You are an expert grant reviewer and professional analyst.\n"
+        "Your task is to provide a SINGLE, cohesive, and comprehensive response that synthesizes information across all provided document excerpts.\n\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. SYNTHESIS: DO NOT evaluate each excerpt separately. Read all excerpts and synthesize the findings into ONE unified, coherent evaluation.\n"
+        "2. NO REDUNDANCY: DO NOT repeat the same points. If multiple excerpts mention the same thing, combine them into a single point.\n"
+        "3. PROFESSIONAL FORMATTING: You MUST format the output professionally using clean Markdown. Use headings (##), bullet points for lists, and **bold text** for emphasis. YOU MUST include blank lines between paragraphs and sections to make it highly readable and prevent it from looking like a block of text.\n"
+        "4. STRICT ACCURACY: Answer the user's prompt based ONLY on the provided excerpts."
+    )
+    
     context_str = "\n\n---\n\n".join(context_chunks)
-    prompt = f"Answer the following User Prompt using the provided Excerpts.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
+    prompt = f"Please read the following Excerpts and provide ONE unified answer to the User Prompt.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
     
     try:
         import time
@@ -223,6 +282,59 @@ def delete_document(doc_id):
 
 # --- EVALUATIONS (STAGE 2) ---
 
+def process_evaluation_task(task):
+    eval_id = task["eval_id"]
+    prompt = task["prompt"]
+    selected_docs_meta = task["docs"]
+    eval_dir = os.path.join(EVALS_DIR, eval_id)
+    
+    logger.info(f"Processing task for eval_id: {eval_id}")
+    try:
+        selected_doc_ids = [d["doc_id"] for d in selected_docs_meta]
+        results = collection.query(
+            query_texts=[prompt],
+            n_results=15,
+            where={"doc_id": {"$in": selected_doc_ids}}
+        )
+        
+        retrieved_chunks = results['documents'][0]
+        retrieved_meta = results['metadatas'][0]
+        
+        formatted_chunks = []
+        for chunk, m in zip(retrieved_chunks, retrieved_meta):
+            formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
+            
+        final_answer = generate_rag_answer(prompt, formatted_chunks)
+        
+        final_report = f"# Evaluation Results\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
+        for m in retrieved_meta:
+            final_report += f"- {m['filename']} (Page {m['page']})\n"
+            
+        with open(os.path.join(eval_dir, "final_report.md"), "w", encoding="utf-8") as f:
+            f.write(final_report)
+            
+        meta_path = os.path.join(eval_dir, "eval_meta.json")
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["status"] = "Completed"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=4)
+            
+        logger.info(f"Task completed for eval_id: {eval_id}")
+    except Exception as e:
+        logger.error(f"Error processing evaluation {eval_id}: {e}")
+        meta_path = os.path.join(eval_dir, "eval_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                meta["status"] = "Error"
+                meta["error_message"] = str(e)
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, indent=4)
+            except:
+                pass
+
 def create_evaluation(prompt, selected_docs_meta):
     eval_id = str(uuid.uuid4())
     eval_dir = os.path.join(EVALS_DIR, eval_id)
@@ -232,36 +344,18 @@ def create_evaluation(prompt, selected_docs_meta):
         "eval_id": eval_id,
         "prompt": prompt,
         "docs": selected_docs_meta,
-        "status": "Completed" # RAG is instant, no "In Progress" looping needed
+        "status": "In Progress" 
     }
     
-    # RAG Query
-    selected_doc_ids = [d["doc_id"] for d in selected_docs_meta]
-    results = collection.query(
-        query_texts=[prompt],
-        n_results=15, # Retrieve top 15 most relevant pages across all docs
-        where={"doc_id": {"$in": selected_doc_ids}}
-    )
-    
-    retrieved_chunks = results['documents'][0]
-    retrieved_meta = results['metadatas'][0]
-    
-    formatted_chunks = []
-    for chunk, m in zip(retrieved_chunks, retrieved_meta):
-        formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
-        
-    final_answer = generate_rag_answer(prompt, formatted_chunks)
-    
-    final_report = f"# Evaluation Results\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
-    for m in retrieved_meta:
-        final_report += f"- {m['filename']} (Page {m['page']})\n"
-        
     with open(os.path.join(eval_dir, "eval_meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=4)
         
-    with open(os.path.join(eval_dir, "final_report.md"), "w", encoding="utf-8") as f:
-        f.write(final_report)
-        
+    task_queue.put({
+        "eval_id": eval_id,
+        "prompt": prompt,
+        "docs": selected_docs_meta
+    })
+    
     return eval_id
 
 def load_evaluations():
@@ -293,6 +387,11 @@ def get_final_report(eval_id):
 # --- UI ---
 
 def main():
+    with st.sidebar:
+        st.header("System")
+        if st.button("Restart Server (Clear Cache)", help="Forces the Python server to restart. If you use run_app.bat, it will automatically come back online."):
+            os._exit(0)
+
     st.title("Multi-Document Hybrid RAG Evaluator")
 
     tab1, tab2 = st.tabs(["📚 Document Library (Ingestion)", "⚙️ Evaluations (Q&A)"])
@@ -351,10 +450,32 @@ def render_evaluations_dashboard():
     
     if st.button("Generate Answer"):
         if selected_doc_ids and criteria:
-            with st.spinner("Searching vector database and generating answer..."):
-                selected_docs_meta = [d for d in ready_docs if d['doc_id'] in selected_doc_ids]
-                eval_id = create_evaluation(criteria, selected_docs_meta)
-                st.session_state.view_eval_id = eval_id
+            selected_docs_meta = [d for d in ready_docs if d['doc_id'] in selected_doc_ids]
+            eval_id = create_evaluation(criteria, selected_docs_meta)
+            st.session_state.view_eval_id = eval_id
+            
+            status_container = st.empty()
+            dots = 0
+            try:
+                while True:
+                    meta_path = os.path.join(EVALS_DIR, eval_id, "eval_meta.json")
+                    if os.path.exists(meta_path):
+                        with open(meta_path, "r", encoding="utf-8") as f:
+                            meta = json.load(f)
+                        
+                        if meta.get("status") == "Completed":
+                            status_container.success("Answer generated successfully!")
+                            break
+                        elif meta.get("status") == "Error":
+                            status_container.error(f"Error during generation: {meta.get('error_message', 'Unknown')}")
+                            break
+                    
+                    dots = (dots + 1) % 4
+                    status_container.info(f"Task queued and processing in background{'.' * dots}\n(Cloudflare connection is kept alive)")
+                    time.sleep(2)
+            except Exception as e:
+                logger.warning(f"UI waiting loop interrupted (client likely disconnected): {e}")
+                
         else:
             st.warning("Please select at least one document and enter a question.")
             
@@ -363,7 +484,10 @@ def render_evaluations_dashboard():
     if getattr(st.session_state, 'view_eval_id', None):
         st.subheader("Latest Result")
         report = get_final_report(st.session_state.view_eval_id)
-        st.markdown(report)
+        if report:
+            st.markdown(report)
+        else:
+            st.warning("Report is not ready or encountered an error.")
         st.divider()
 
     st.header("Past Q&A Sessions")
@@ -372,11 +496,21 @@ def render_evaluations_dashboard():
         st.info("No past evaluations.")
     else:
         for ev in reversed(evals):
-            with st.expander(f"Q: {ev['prompt'][:50]}..."):
+            status = ev.get('status', 'Completed')
+            status_icon = "⏳" if status == "In Progress" else "✅" if status == "Completed" else "❌"
+            with st.expander(f"{status_icon} Q: {ev['prompt'][:50]}..."):
                 doc_names = ", ".join([d['filename'] for d in ev['docs']])
-                st.caption(f"Sources: {doc_names}")
-                report = get_final_report(ev['eval_id'])
-                st.markdown(report)
+                st.caption(f"Status: **{status}** | Sources: {doc_names}")
+                
+                if status == "Completed":
+                    report = get_final_report(ev['eval_id'])
+                    if report:
+                        st.markdown(report)
+                elif status == "Error":
+                    st.error(ev.get("error_message", "Unknown error."))
+                else:
+                    st.info("Task is currently in progress. Please check back later.")
+                    
                 if st.button("Delete Log", key=f"del_{ev['eval_id']}"):
                     delete_evaluation(ev['eval_id'])
                     st.rerun()
