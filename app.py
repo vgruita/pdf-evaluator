@@ -10,11 +10,25 @@ import json
 import uuid
 import shutil
 import logging
+import sys
 import chromadb
 from chromadb.api.types import Documents, EmbeddingFunction, Embeddings
 
-# Suppress noisy "Invalid HTTP request received." warnings from Tornado (used by Streamlit)
-logging.getLogger("tornado.general").setLevel(logging.ERROR)
+# Configurare sistem de logare pentru a scrie atat in fisier cat si pe ecran
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=[
+        logging.FileHandler("app.log", encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Activam logurile serverului web intern (Tornado) pentru a vedea fix cand pica conexiunea cu Cloudflare
+logging.getLogger("tornado.access").setLevel(logging.INFO)
+logging.getLogger("tornado.application").setLevel(logging.INFO)
+logging.getLogger("tornado.general").setLevel(logging.INFO)
 
 st.set_page_config(page_title="Multi-Document RAG Evaluator", layout="wide")
 
@@ -70,7 +84,7 @@ def extract_text_with_vision(base64_image):
         return response.get('message', {}).get('content', '')
     except Exception as e:
         error_msg = f"Vision extraction failed: {e}"
-        print(f"[{VISION_MODEL}] ERROR: {error_msg}")
+        logger.error(f"[{VISION_MODEL}] ERROR: {error_msg}")
         st.error(error_msg)
         return ""
 
@@ -80,6 +94,9 @@ def generate_rag_answer(criteria, context_chunks):
     prompt = f"Answer the following User Prompt using the provided Excerpts.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
     
     try:
+        import time
+        start_time = time.time()
+        logger.info(f"[{SYNTHESIS_MODEL}] A inceput generarea raspunsului (asta poate dura mult)...")
         response = ollama.chat(
             model=SYNTHESIS_MODEL, 
             messages=[
@@ -88,12 +105,14 @@ def generate_rag_answer(criteria, context_chunks):
             ],
             options={"temperature": 0.0, "num_predict": 4096}
         )
+        duration = time.time() - start_time
+        logger.info(f"[{SYNTHESIS_MODEL}] Raspuns primit cu succes in {duration:.2f} secunde.")
         if 'error' in response:
             raise Exception(response['error'])
         return response.get('message', {}).get('content', '')
     except Exception as e:
         error_msg = f"Model error during synthesis: {e}"
-        print(f"[{SYNTHESIS_MODEL}] ERROR: {error_msg}")
+        logger.error(f"[{SYNTHESIS_MODEL}] ERROR: {error_msg}")
         raise Exception(error_msg)
 
 # --- DOCUMENT INGESTION (STAGE 1) ---
