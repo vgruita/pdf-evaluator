@@ -344,7 +344,8 @@ def create_evaluation(prompt, selected_docs_meta):
         "eval_id": eval_id,
         "prompt": prompt,
         "docs": selected_docs_meta,
-        "status": "In Progress" 
+        "status": "In Progress",
+        "created_at": time.time()
     }
     
     with open(os.path.join(eval_dir, "eval_meta.json"), "w", encoding="utf-8") as f:
@@ -366,9 +367,14 @@ def load_evaluations():
             if os.path.exists(meta_path):
                 try:
                     with open(meta_path, "r", encoding="utf-8") as f:
-                        evals.append(json.load(f))
+                        meta = json.load(f)
+                    if "created_at" not in meta:
+                        meta["created_at"] = os.path.getctime(meta_path)
+                    evals.append(meta)
                 except Exception:
                     pass
+    
+    evals.sort(key=lambda x: x.get("created_at", 0), reverse=True)
     return evals
 
 def delete_evaluation(eval_id):
@@ -495,25 +501,40 @@ def render_evaluations_dashboard():
     if not evals:
         st.info("No past evaluations.")
     else:
-        for ev in reversed(evals):
+        from datetime import datetime
+        
+        for ev in evals:
             status = ev.get('status', 'Completed')
             status_icon = "⏳" if status == "In Progress" else "✅" if status == "Completed" else "❌"
-            with st.expander(f"{status_icon} Q: {ev['prompt'][:50]}..."):
+            
+            with st.container(border=True):
+                dt = datetime.fromtimestamp(ev.get('created_at', 0))
+                date_str = dt.strftime('%Y-%m-%d %H:%M:%S')
                 doc_names = ", ".join([d['filename'] for d in ev['docs']])
-                st.caption(f"Status: **{status}** | Sources: {doc_names}")
                 
-                if status == "Completed":
-                    report = get_final_report(ev['eval_id'])
-                    if report:
-                        st.markdown(report)
-                elif status == "Error":
-                    st.error(ev.get("error_message", "Unknown error."))
-                else:
-                    st.info("Task is currently in progress. Please check back later.")
-                    
-                if st.button("Delete Log", key=f"del_{ev['eval_id']}"):
-                    delete_evaluation(ev['eval_id'])
-                    st.rerun()
+                # Folosim un singur bloc markdown/HTML cu un line-height redus pentru a lipi elementele intre ele
+                card_html = f"""
+                <div style="line-height: 1.4; margin-bottom: -10px;">
+                    <div style="font-weight: bold; margin-bottom: 4px;">{status_icon} Q: {ev['prompt'][:80]}...</div>
+                    <div style="color: grey; font-size: 0.85em; margin-bottom: 2px;">📅 Query Date: {date_str}</div>
+                    <div style="font-size: 0.95em; margin-bottom: 8px;">📄 <b>Context:</b> {doc_names}</div>
+                </div>
+                """
+                st.markdown(card_html, unsafe_allow_html=True)
+                
+                with st.expander("View detailed answer"):
+                    if status == "Completed":
+                        report = get_final_report(ev['eval_id'])
+                        if report:
+                            st.markdown(report)
+                    elif status == "Error":
+                        st.error(ev.get("error_message", "Unknown error."))
+                    else:
+                        st.info("Task is currently in progress. Please check back later.")
+                        
+                    if st.button("Delete Log", key=f"del_{ev['eval_id']}"):
+                        delete_evaluation(ev['eval_id'])
+                        st.rerun()
 
 if __name__ == "__main__":
     main()
