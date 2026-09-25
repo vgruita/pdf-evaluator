@@ -119,8 +119,6 @@ def get_task_queue():
                     
     return q
 
-task_queue = get_task_queue()
-
 def get_base64_image(page):
     pix = page.get_pixmap(dpi=150)
     img_bytes = pix.tobytes("png")
@@ -777,6 +775,8 @@ def render_evaluations_dashboard():
                     if st.button("Delete Log", key=f"del_{ev['eval_id']}"):
                         delete_evaluation(ev['eval_id'])
                         st.rerun()
+
+task_queue = get_task_queue()
 
 if __name__ == "__main__":
     main()
