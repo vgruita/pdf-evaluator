@@ -86,7 +86,11 @@ def get_task_queue():
             if task is None:
                 break
             try:
-                process_evaluation_task(task)
+                mode = task.get("mode", "indepth")
+                if mode == "standard":
+                    process_standard_evaluation_task(task)
+                else:
+                    process_indepth_evaluation_task(task)
             except Exception as e:
                 logger.error(f"Worker thread error: {e}")
             finally:
@@ -107,7 +111,8 @@ def get_task_queue():
                         q.put({
                             "eval_id": meta["eval_id"],
                             "prompt": meta["prompt"],
-                            "docs": meta.get("docs", [])
+                            "docs": meta.get("docs", []),
+                            "mode": meta.get("mode", "indepth")
                         })
                 except Exception as e:
                     logger.error(f"Eroare la incarcarea persistentei: {e}")
@@ -267,7 +272,82 @@ def delete_document(doc_id):
 
 # --- EVALUATIONS (STAGE 2) ---
 
-def process_evaluation_task(task):
+def generate_rag_answer(criteria, context_chunks):
+    system_instruction = (
+        "You are an expert grant reviewer and professional analyst.\n"
+        "Your task is to provide a SINGLE, cohesive, and comprehensive response that synthesizes information across all provided document excerpts.\n\n"
+        "CRITICAL INSTRUCTIONS:\n"
+        "1. SYNTHESIS: DO NOT evaluate each excerpt separately. Read all excerpts and synthesize the findings into ONE unified, coherent evaluation.\n"
+        "2. NO REDUNDANCY: DO NOT repeat the same points. If multiple excerpts mention the same thing, combine them into a single point.\n"
+        "3. PROFESSIONAL FORMATTING: You MUST format the output professionally using clean Markdown. Use headings (##), bullet points for lists, and **bold text** for emphasis. YOU MUST include blank lines between paragraphs and sections to make it highly readable and prevent it from looking like a block of text.\n"
+        "4. STRICT ACCURACY: Answer the user's prompt based ONLY on the provided excerpts.\n"
+        "5. STRUCTURAL COMPLIANCE: If the User Prompt implies or requests a specific output structure, or contains a numbered list of headings (e.g., '2. X', '3. Y'), you MUST generate your final response using EXACTLY those headings in the exact same order. Do not invent your own headings if a template is provided."
+    )
+    
+    context_str = "\n\n---\n\n".join(context_chunks)
+    prompt = f"Please read the following Excerpts and provide ONE unified answer to the User Prompt.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
+    
+    return llm_chat([
+        {'role': 'system', 'content': system_instruction},
+        {'role': 'user', 'content': prompt}
+    ], temperature=0.0)
+
+def process_standard_evaluation_task(task):
+    eval_id = task["eval_id"]
+    prompt = task["prompt"]
+    selected_docs_meta = task["docs"]
+    eval_dir = os.path.join(EVALS_DIR, eval_id)
+    
+    logger.info(f"Processing standard task for eval_id: {eval_id}")
+    try:
+        selected_doc_ids = [d["doc_id"] for d in selected_docs_meta]
+        results = collection.query(
+            query_texts=[prompt],
+            n_results=15,
+            where={"doc_id": {"$in": selected_doc_ids}}
+        )
+        
+        retrieved_chunks = results['documents'][0]
+        retrieved_meta = results['metadatas'][0]
+        
+        formatted_chunks = []
+        for chunk, m in zip(retrieved_chunks, retrieved_meta):
+            formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
+            
+        final_answer = generate_rag_answer(prompt, formatted_chunks)
+        
+        final_report = f"# Evaluation Results (Standard)\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
+        for m in retrieved_meta:
+            final_report += f"- {m['filename']} (Page {m['page']})\n"
+            
+        with open(os.path.join(eval_dir, "final_report.md"), "w", encoding="utf-8") as f:
+            f.write(final_report)
+            
+        meta_path = os.path.join(eval_dir, "eval_meta.json")
+        with open(meta_path, "r", encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["status"] = "Completed"
+        meta["current_step"] = "Finished"
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, indent=4)
+            
+        logger.info(f"Task completed for eval_id: {eval_id}")
+    except Exception as e:
+        logger.error(f"Error processing evaluation {eval_id}: {e}")
+        meta_path = os.path.join(eval_dir, "eval_meta.json")
+        if os.path.exists(meta_path):
+            try:
+                with open(meta_path, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+                meta["status"] = "Error"
+                meta["error_message"] = str(e)
+                meta["current_step"] = f"Error: {str(e)}"
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump(meta, f, indent=4)
+            except:
+                pass
+
+def process_indepth_evaluation_task(task):
     eval_id = task["eval_id"]
     user_prompt = task["prompt"]
     selected_docs_meta = task["docs"]
@@ -452,7 +532,7 @@ def process_evaluation_task(task):
             except:
                 pass
 
-def create_evaluation(prompt, selected_docs_meta):
+def create_evaluation(prompt, selected_docs_meta, mode="indepth"):
     eval_id = str(uuid.uuid4())
     eval_dir = os.path.join(EVALS_DIR, eval_id)
     os.makedirs(eval_dir)
@@ -462,7 +542,8 @@ def create_evaluation(prompt, selected_docs_meta):
         "prompt": prompt,
         "docs": selected_docs_meta,
         "status": "In Progress",
-        "created_at": time.time()
+        "created_at": time.time(),
+        "mode": mode
     }
     
     with open(os.path.join(eval_dir, "eval_meta.json"), "w", encoding="utf-8") as f:
@@ -471,7 +552,8 @@ def create_evaluation(prompt, selected_docs_meta):
     task_queue.put({
         "eval_id": eval_id,
         "prompt": prompt,
-        "docs": selected_docs_meta
+        "docs": selected_docs_meta,
+        "mode": mode
     })
     
     return eval_id
@@ -571,10 +653,17 @@ def render_evaluations_dashboard():
     
     criteria = st.text_area("Question / Evaluation Prompt", height=100, placeholder="e.g., Extract all financial figures related to Q3 revenue across the selected documents.")
     
-    if st.button("Generate Answer"):
+    col1, col2 = st.columns(2)
+    with col1:
+        generate_std = st.button("Generate Answer (Fast/Standard)", use_container_width=True)
+    with col2:
+        generate_in_depth = st.button("Generate In-Depth Answer (Agentic Workflow)", type="primary", use_container_width=True)
+    
+    if generate_std or generate_in_depth:
         if selected_doc_ids and criteria:
+            mode = "standard" if generate_std else "indepth"
             selected_docs_meta = [d for d in ready_docs if d['doc_id'] in selected_doc_ids]
-            eval_id = create_evaluation(criteria, selected_docs_meta)
+            eval_id = create_evaluation(criteria, selected_docs_meta, mode)
             st.session_state.view_eval_id = eval_id
             
             status_container = st.empty()
