@@ -642,6 +642,33 @@ def render_document_library():
                 delete_document(doc['doc_id'])
                 st.rerun()
 
+def render_trace_files(eval_id):
+    steps_dir = os.path.join(EVALS_DIR, eval_id, "steps")
+    if not os.path.exists(steps_dir):
+        return
+        
+    files = [f for f in os.listdir(steps_dir) if f.endswith(".md")]
+    if not files:
+        return
+        
+    st.subheader("🔍 Chain of Thought Traces (In-Depth Mode)")
+    
+    import re
+    def sort_key(f):
+        nums = [int(n) for n in re.findall(r'\d+', f)]
+        is_summary = 1 if "summary" in f else 0
+        return nums + [is_summary]
+        
+    try:
+        files.sort(key=sort_key)
+    except:
+        files.sort()
+        
+    for f_name in files:
+        with st.expander(f"📄 {f_name}"):
+            with open(os.path.join(steps_dir, f_name), "r", encoding="utf-8") as f:
+                st.markdown(f.read())
+
 def render_evaluations_dashboard():
     docs = load_documents()
     ready_docs = [d for d in docs if d.get('ingestion_status') == 'Ready']
@@ -705,6 +732,7 @@ def render_evaluations_dashboard():
         report = get_final_report(st.session_state.view_eval_id)
         if report:
             st.markdown(report)
+            render_trace_files(st.session_state.view_eval_id)
         else:
             st.warning("Report is not ready or encountered an error.")
         st.divider()
@@ -740,6 +768,7 @@ def render_evaluations_dashboard():
                         report = get_final_report(ev['eval_id'])
                         if report:
                             st.markdown(report)
+                            render_trace_files(ev['eval_id'])
                     elif status == "Error":
                         st.error(ev.get("error_message", "Unknown error."))
                     else:
