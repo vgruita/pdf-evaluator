@@ -423,7 +423,7 @@ def process_indepth_evaluation_task(task):
                 
                 # 1.3 INITIAL CONCLUSION FOR SUB-CRITERION
                 eval_msg = [
-                    {'role': 'system', 'content': 'Evaluate the given sub-criterion based strictly on the provided document excerpts.'},
+                    {'role': 'system', 'content': 'You are a meticulous, highly detailed grant evaluator. Evaluate the given sub-criterion based strictly on the provided document excerpts. Write a comprehensive, multi-paragraph analysis. Cite specific text, numbers, and facts from the excerpts to back up every claim.'},
                     {'role': 'user', 'content': f"Sub-criterion to evaluate: {sub_crit}\n\nExcerpts:\n{context_str}"}
                 ]
                 initial_conclusion = llm_chat(eval_msg, temperature=0.0)
@@ -471,7 +471,7 @@ def process_indepth_evaluation_task(task):
             log_and_update(f"Step 1.5: Synthesizing sub-criteria for '{main_criterion[:40]}'...")
             all_sub_text = "\n\n".join(verified_sub_conclusions)
             synth_main_msg = [
-                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one cohesive, comprehensive answer that directly addresses the Main Criterion. Do not list the sub-criteria, write a unified evaluation.'},
+                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one highly detailed, comprehensive answer that addresses the Main Criterion. YOU MUST RETAIN all critical evidence, quotes, and nuance from the sub-evaluations. Do NOT summarize them into a short paragraph; write an exhaustive, in-depth evaluation.'},
                 {'role': 'user', 'content': f"Main Criterion:\n{main_criterion}\n\nSub-evaluations to synthesize:\n{all_sub_text}"}
             ]
             main_conclusion = llm_chat(synth_main_msg, temperature=0.0)
@@ -488,7 +488,7 @@ def process_indepth_evaluation_task(task):
         log_and_update("Step 1.6: Final global synthesis...")
         all_conclusions_text = "\n".join(verified_main_conclusions)
         synthesis_msg = [
-            {'role': 'system', 'content': 'You are a professional grant reviewer. Your task is to take the provided verified evaluations and format them EXACTLY as requested in the User Formatting Prompt & Constraints (use exact Markdown headers, numbers, etc). Do not skip any sections.'},
+            {'role': 'system', 'content': 'You are a professional grant reviewer. Format the provided verified evaluations EXACTLY as requested in the User Formatting Prompt (use exact Markdown headers, numbers, etc). CRITICAL RULE: DO NOT summarize, shorten, or omit any details from the Verified Evaluations. You MUST preserve their full length, reasoning, and depth. Your only job is to format them.'},
             {'role': 'user', 'content': f"User Formatting Prompt & Constraints:\n{user_prompt}\n\nVerified Evaluations to Format:\n{all_conclusions_text}"}
         ]
         final_answer = llm_chat(synthesis_msg, temperature=0.0)
