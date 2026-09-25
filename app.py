@@ -146,7 +146,8 @@ def generate_rag_answer(criteria, context_chunks):
         "1. SYNTHESIS: DO NOT evaluate each excerpt separately. Read all excerpts and synthesize the findings into ONE unified, coherent evaluation.\n"
         "2. NO REDUNDANCY: DO NOT repeat the same points. If multiple excerpts mention the same thing, combine them into a single point.\n"
         "3. PROFESSIONAL FORMATTING: You MUST format the output professionally using clean Markdown. Use headings (##), bullet points for lists, and **bold text** for emphasis. YOU MUST include blank lines between paragraphs and sections to make it highly readable and prevent it from looking like a block of text.\n"
-        "4. STRICT ACCURACY: Answer the user's prompt based ONLY on the provided excerpts."
+        "4. STRICT ACCURACY: Answer the user's prompt based ONLY on the provided excerpts.\n"
+        "5. STRUCTURAL COMPLIANCE: If the User Prompt implies or requests a specific output structure, or contains a numbered list of headings (e.g., '2. X', '3. Y'), you MUST generate your final response using EXACTLY those headings in the exact same order. Do not invent your own headings if a template is provided."
     )
     
     context_str = "\n\n---\n\n".join(context_chunks)
