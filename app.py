@@ -138,41 +138,25 @@ def extract_text_with_vision(base64_image):
         st.error(error_msg)
         return ""
 
-def generate_rag_answer(criteria, context_chunks):
-    system_instruction = (
-        "You are an expert grant reviewer and professional analyst.\n"
-        "Your task is to provide a SINGLE, cohesive, and comprehensive response that synthesizes information across all provided document excerpts.\n\n"
-        "CRITICAL INSTRUCTIONS:\n"
-        "1. SYNTHESIS: DO NOT evaluate each excerpt separately. Read all excerpts and synthesize the findings into ONE unified, coherent evaluation.\n"
-        "2. NO REDUNDANCY: DO NOT repeat the same points. If multiple excerpts mention the same thing, combine them into a single point.\n"
-        "3. PROFESSIONAL FORMATTING: You MUST format the output professionally using clean Markdown. Use headings (##), bullet points for lists, and **bold text** for emphasis. YOU MUST include blank lines between paragraphs and sections to make it highly readable and prevent it from looking like a block of text.\n"
-        "4. STRICT ACCURACY: Answer the user's prompt based ONLY on the provided excerpts.\n"
-        "5. STRUCTURAL COMPLIANCE: If the User Prompt implies or requests a specific output structure, or contains a numbered list of headings (e.g., '2. X', '3. Y'), you MUST generate your final response using EXACTLY those headings in the exact same order. Do not invent your own headings if a template is provided."
-    )
-    
-    context_str = "\n\n---\n\n".join(context_chunks)
-    prompt = f"Please read the following Excerpts and provide ONE unified answer to the User Prompt.\n\nUser Prompt:\n{criteria}\n\nExcerpts:\n{context_str}"
-    
+def llm_chat(messages, model=SYNTHESIS_MODEL, temperature=0.0):
     try:
         import time
         start_time = time.time()
-        logger.info(f"[{SYNTHESIS_MODEL}] A inceput generarea raspunsului (asta poate dura mult)...")
+        logger.info(f"[{model}] Starting LLM generation...")
         response = ollama.chat(
-            model=SYNTHESIS_MODEL, 
-            messages=[
-                {'role': 'system', 'content': system_instruction},
-                {'role': 'user', 'content': prompt}
-            ],
-            options={"temperature": 0.0, "num_predict": 4096}
+            model=model, 
+            messages=messages,
+            options={"temperature": temperature, "num_predict": 4096}
         )
         duration = time.time() - start_time
-        logger.info(f"[{SYNTHESIS_MODEL}] Raspuns primit cu succes in {duration:.2f} secunde.")
+        logger.info(f"[{model}] Response received in {duration:.2f}s")
+        
         if 'error' in response:
             raise Exception(response['error'])
         return response.get('message', {}).get('content', '')
     except Exception as e:
-        error_msg = f"Model error during synthesis: {e}"
-        logger.error(f"[{SYNTHESIS_MODEL}] ERROR: {error_msg}")
+        error_msg = f"Model error: {e}"
+        logger.error(f"[{model}] ERROR: {error_msg}")
         raise Exception(error_msg)
 
 # --- DOCUMENT INGESTION (STAGE 1) ---
@@ -285,31 +269,138 @@ def delete_document(doc_id):
 
 def process_evaluation_task(task):
     eval_id = task["eval_id"]
-    prompt = task["prompt"]
+    user_prompt = task["prompt"]
     selected_docs_meta = task["docs"]
     eval_dir = os.path.join(EVALS_DIR, eval_id)
     
-    logger.info(f"Processing task for eval_id: {eval_id}")
+    def log_and_update(msg):
+        logger.info(msg)
+        meta_path = os.path.join(eval_dir, "eval_meta.json")
+        try:
+            with open(meta_path, "r", encoding="utf-8") as f:
+                meta = json.load(f)
+            meta["current_step"] = msg
+            if "logs" not in meta:
+                meta["logs"] = []
+            meta["logs"].append(msg)
+            with open(meta_path, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=4)
+        except Exception:
+            pass
+            
+    log_and_update(f"Processing complex Multi-Step evaluation for: {eval_id}")
     try:
         selected_doc_ids = [d["doc_id"] for d in selected_docs_meta]
-        results = collection.query(
-            query_texts=[prompt],
-            n_results=15,
-            where={"doc_id": {"$in": selected_doc_ids}}
-        )
         
-        retrieved_chunks = results['documents'][0]
-        retrieved_meta = results['metadatas'][0]
+        # 1.1 EXTRAGERE CRITERII (Breakdown)
+        log_and_update("Step 1.1: Breakdown prompt into criteria...")
+        breakdown_msg = [
+            {'role': 'system', 'content': 'You are a logical analyst. Break down the provided evaluation rubric into a list of distinct sections/criteria that need to be evaluated. Return them as a numbered list.'},
+            {'role': 'user', 'content': f"Rubric:\n{user_prompt}"}
+        ]
+        criteria_list_text = llm_chat(breakdown_msg, temperature=0.1)
         
-        formatted_chunks = []
-        for chunk, m in zip(retrieved_chunks, retrieved_meta):
-            formatted_chunks.append(f"**Source: {m['filename']} (Page {m['page']})**\n{chunk}")
+        criteria_items = [c.strip() for c in criteria_list_text.split('\n') if c.strip() and c.strip()[0].isdigit()]
+        if not criteria_items:
+            criteria_items = [user_prompt]
             
-        final_answer = generate_rag_answer(prompt, formatted_chunks)
+        verified_main_conclusions = []
+        all_retrieved_meta = []
         
-        final_report = f"# Evaluation Results\n\n**Prompt:** {prompt}\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
-        for m in retrieved_meta:
-            final_report += f"- {m['filename']} (Page {m['page']})\n"
+        for main_criterion in criteria_items:
+            log_and_update(f"Processing MAIN criterion: {main_criterion[:60]}...")
+            
+            # 1.2 Breakdown Main Criterion into sub-criteria
+            log_and_update(f"Step 1.2: Breakdown MAIN criterion into sub-criteria...")
+            sub_breakdown_msg = [
+                {'role': 'system', 'content': 'You are a logical analyst. Break down the provided complex evaluation criterion into smaller, distinct sub-criteria or steps to check. Return them as a numbered list. If the criterion is very simple, just return it as a single item list.'},
+                {'role': 'user', 'content': f"Criterion:\n{main_criterion}"}
+            ]
+            sub_criteria_list_text = llm_chat(sub_breakdown_msg, temperature=0.1)
+            sub_criteria_items = [c.strip() for c in sub_criteria_list_text.split('\n') if c.strip() and c.strip()[0].isdigit()]
+            if not sub_criteria_items:
+                sub_criteria_items = [main_criterion]
+                
+            verified_sub_conclusions = []
+            
+            for sub_crit in sub_criteria_items:
+                log_and_update(f"Processing SUB-criterion: {sub_crit[:60]}...")
+                
+                results = collection.query(
+                    query_texts=[sub_crit],
+                    n_results=7,
+                    where={"doc_id": {"$in": selected_doc_ids}}
+                )
+                chunks = results['documents'][0]
+                metas = results['metadatas'][0]
+                all_retrieved_meta.extend(metas)
+                
+                context_str = "\n---\n".join([f"(Source: {m['filename']}, Page {m['page']}) {c}" for c, m in zip(chunks, metas)])
+                
+                # 1.3 INITIAL CONCLUSION FOR SUB-CRITERION
+                eval_msg = [
+                    {'role': 'system', 'content': 'Evaluate the given sub-criterion based strictly on the provided document excerpts.'},
+                    {'role': 'user', 'content': f"Sub-criterion to evaluate: {sub_crit}\n\nExcerpts:\n{context_str}"}
+                ]
+                initial_conclusion = llm_chat(eval_msg, temperature=0.0)
+                
+                # 1.4 VERIFICATION FOR SUB-CRITERION
+                critique_msg = [
+                    {'role': 'system', 'content': 'Identify any missing information or weaknesses mentioned in the conclusion. If none, reply with exactly "NONE".'},
+                    {'role': 'user', 'content': f"Conclusion: {initial_conclusion}"}
+                ]
+                weaknesses = llm_chat(critique_msg, temperature=0.0)
+                
+                if "NONE" not in weaknesses.upper() and len(weaknesses) > 10:
+                    log_and_update(f"Possible gaps found in sub-criterion. Re-querying...")
+                    verify_results = collection.query(
+                        query_texts=[weaknesses],
+                        n_results=4,
+                        where={"doc_id": {"$in": selected_doc_ids}}
+                    )
+                    verify_chunks = verify_results['documents'][0]
+                    verify_context = "\n---\n".join(verify_chunks)
+                    
+                    resolve_msg = [
+                        {'role': 'system', 'content': 'You previously wrote a conclusion that found some weaknesses. Here is new context. If the new context resolves the weaknesses, rewrite the conclusion to fix the mistakes. If the weaknesses are still true, output the original conclusion.'},
+                        {'role': 'user', 'content': f"Original Conclusion: {initial_conclusion}\n\nWeaknesses Found: {weaknesses}\n\nNew Context: {verify_context}"}
+                    ]
+                    final_sub_conclusion = llm_chat(resolve_msg, temperature=0.0)
+                else:
+                    final_sub_conclusion = initial_conclusion
+                    
+                verified_sub_conclusions.append(f"- Sub-evaluation for '{sub_crit}':\n{final_sub_conclusion}")
+                
+            # 1.5 SYNTHESIZE SUB-CRITERIA INTO MAIN CRITERION
+            log_and_update(f"Step 1.5: Synthesizing sub-criteria for '{main_criterion[:40]}'...")
+            all_sub_text = "\n\n".join(verified_sub_conclusions)
+            synth_main_msg = [
+                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one cohesive, comprehensive answer that directly addresses the Main Criterion. Do not list the sub-criteria, write a unified evaluation.'},
+                {'role': 'user', 'content': f"Main Criterion:\n{main_criterion}\n\nSub-evaluations to synthesize:\n{all_sub_text}"}
+            ]
+            main_conclusion = llm_chat(synth_main_msg, temperature=0.0)
+            verified_main_conclusions.append(f"### Evaluation for:\n{main_criterion}\n\n{main_conclusion}\n")
+            
+        # 1.6 FINAL GLOBAL SYNTHESIS
+        log_and_update("Step 1.6: Final global synthesis...")
+        all_conclusions_text = "\n".join(verified_main_conclusions)
+        synthesis_msg = [
+            {'role': 'system', 'content': 'You are a professional grant reviewer. Your task is to take the provided verified evaluations and format them EXACTLY as requested in the User Formatting Prompt & Constraints (use exact Markdown headers, numbers, etc). Do not skip any sections.'},
+            {'role': 'user', 'content': f"User Formatting Prompt & Constraints:\n{user_prompt}\n\nVerified Evaluations to Format:\n{all_conclusions_text}"}
+        ]
+        final_answer = llm_chat(synthesis_msg, temperature=0.0)
+        
+        unique_sources = []
+        seen = set()
+        for m in all_retrieved_meta:
+            sig = f"{m['filename']} (Page {m['page']})"
+            if sig not in seen:
+                seen.add(sig)
+                unique_sources.append(sig)
+                
+        final_report = f"# Evaluation Results\n\n## Answer\n\n{final_answer}\n\n## Sources Used\n\n"
+        for s in unique_sources:
+            final_report += f"- {s}\n"
             
         with open(os.path.join(eval_dir, "final_report.md"), "w", encoding="utf-8") as f:
             f.write(final_report)
@@ -318,10 +409,11 @@ def process_evaluation_task(task):
         with open(meta_path, "r", encoding="utf-8") as f:
             meta = json.load(f)
         meta["status"] = "Completed"
+        meta["current_step"] = "Finished"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=4)
             
-        logger.info(f"Task completed for eval_id: {eval_id}")
+        log_and_update(f"Task completed successfully for eval_id: {eval_id}")
     except Exception as e:
         logger.error(f"Error processing evaluation {eval_id}: {e}")
         meta_path = os.path.join(eval_dir, "eval_meta.json")
@@ -331,6 +423,7 @@ def process_evaluation_task(task):
                     meta = json.load(f)
                 meta["status"] = "Error"
                 meta["error_message"] = str(e)
+                meta["current_step"] = f"Error: {str(e)}"
                 with open(meta_path, "w", encoding="utf-8") as f:
                     json.dump(meta, f, indent=4)
             except:
@@ -466,6 +559,7 @@ def render_evaluations_dashboard():
             try:
                 while True:
                     meta_path = os.path.join(EVALS_DIR, eval_id, "eval_meta.json")
+                    logs = []
                     if os.path.exists(meta_path):
                         with open(meta_path, "r", encoding="utf-8") as f:
                             meta = json.load(f)
@@ -476,9 +570,15 @@ def render_evaluations_dashboard():
                         elif meta.get("status") == "Error":
                             status_container.error(f"Error during generation: {meta.get('error_message', 'Unknown')}")
                             break
+                            
+                        logs = meta.get("logs", [])
                     
                     dots = (dots + 1) % 4
-                    status_container.info(f"Task queued and processing in background{'.' * dots}\n(Cloudflare connection is kept alive)")
+                    if logs:
+                        log_display = "\n".join(logs) + f"\n...processing{'.' * dots}"
+                        status_container.code(log_display, language="plaintext")
+                    else:
+                        status_container.info(f"Task queued and processing in background{'.' * dots}")
                     time.sleep(2)
             except Exception as e:
                 logger.warning(f"UI waiting loop interrupted (client likely disconnected): {e}")
