@@ -307,7 +307,11 @@ def process_evaluation_task(task):
         verified_main_conclusions = []
         all_retrieved_meta = []
         
-        for main_criterion in criteria_items:
+        steps_dir = os.path.join(eval_dir, "steps")
+        if not os.path.exists(steps_dir):
+            os.makedirs(steps_dir)
+            
+        for c_idx, main_criterion in enumerate(criteria_items, 1):
             log_and_update(f"Processing MAIN criterion: {main_criterion[:60]}...")
             
             # 1.2 Breakdown Main Criterion into sub-criteria
@@ -323,7 +327,7 @@ def process_evaluation_task(task):
                 
             verified_sub_conclusions = []
             
-            for sub_crit in sub_criteria_items:
+            for s_idx, sub_crit in enumerate(sub_criteria_items, 1):
                 log_and_update(f"Processing SUB-criterion: {sub_crit[:60]}...")
                 
                 results = collection.query(
@@ -351,6 +355,7 @@ def process_evaluation_task(task):
                 ]
                 weaknesses = llm_chat(critique_msg, temperature=0.0)
                 
+                verify_context = ""
                 if "NONE" not in weaknesses.upper() and len(weaknesses) > 10:
                     log_and_update(f"Possible gaps found in sub-criterion. Re-querying...")
                     verify_results = collection.query(
@@ -371,6 +376,17 @@ def process_evaluation_task(task):
                     
                 verified_sub_conclusions.append(f"- Sub-evaluation for '{sub_crit}':\n{final_sub_conclusion}")
                 
+                # Save Sub-Criterion Trace
+                sub_trace_file = os.path.join(steps_dir, f"criterion_{c_idx}_sub_{s_idx}.md")
+                with open(sub_trace_file, "w", encoding="utf-8") as f:
+                    f.write(f"## Main Criterion\n{main_criterion}\n\n")
+                    f.write(f"### Sub-Criterion\n{sub_crit}\n\n")
+                    f.write(f"### Initial Conclusion\n{initial_conclusion}\n\n")
+                    f.write(f"### Identified Weaknesses\n{weaknesses}\n\n")
+                    if verify_context:
+                        f.write(f"### Verification Context Retrieved\n{verify_context}\n\n")
+                    f.write(f"### Final Sub-Conclusion\n{final_sub_conclusion}\n")
+                
             # 1.5 SYNTHESIZE SUB-CRITERIA INTO MAIN CRITERION
             log_and_update(f"Step 1.5: Synthesizing sub-criteria for '{main_criterion[:40]}'...")
             all_sub_text = "\n\n".join(verified_sub_conclusions)
@@ -380,6 +396,13 @@ def process_evaluation_task(task):
             ]
             main_conclusion = llm_chat(synth_main_msg, temperature=0.0)
             verified_main_conclusions.append(f"### Evaluation for:\n{main_criterion}\n\n{main_conclusion}\n")
+            
+            # Save Main Criterion Trace
+            main_trace_file = os.path.join(steps_dir, f"criterion_{c_idx}_summary.md")
+            with open(main_trace_file, "w", encoding="utf-8") as f:
+                f.write(f"## Main Criterion\n{main_criterion}\n\n")
+                f.write(f"### Sub-evaluations Provided\n{all_sub_text}\n\n")
+                f.write(f"### Synthesized Main Conclusion\n{main_conclusion}\n")
             
         # 1.6 FINAL GLOBAL SYNTHESIS
         log_and_update("Step 1.6: Final global synthesis...")
