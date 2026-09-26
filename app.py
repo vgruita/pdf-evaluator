@@ -483,13 +483,8 @@ def process_indepth_evaluation_task(task):
                 f.write(f"### Synthesized Main Conclusion\n{main_conclusion}\n")
             
         # 1.6 FINAL GLOBAL SYNTHESIS
-        log_and_update("Step 1.6: Final global synthesis...")
-        all_conclusions_text = "\n".join(verified_main_conclusions)
-        synthesis_msg = [
-            {'role': 'system', 'content': 'You are a professional grant reviewer. Format the provided verified evaluations EXACTLY as requested in the User Formatting Prompt (use exact Markdown headers, numbers, etc). CRITICAL RULE: DO NOT summarize, shorten, or omit any details from the Verified Evaluations. You MUST preserve their full length, reasoning, and depth. Your only job is to format them.'},
-            {'role': 'user', 'content': f"User Formatting Prompt & Constraints:\n{user_prompt}\n\nVerified Evaluations to Format:\n{all_conclusions_text}"}
-        ]
-        final_answer = llm_chat(synthesis_msg, temperature=0.0)
+        log_and_update("Step 1.6: Assembling final global report (bypassing LLM to preserve details)...")
+        final_answer = "\n".join(verified_main_conclusions)
         
         unique_sources = []
         seen = set()
