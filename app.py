@@ -469,11 +469,16 @@ def process_indepth_evaluation_task(task):
             log_and_update(f"Step 1.5: Synthesizing sub-criteria for '{main_criterion[:40]}'...")
             all_sub_text = "\n\n".join(verified_sub_conclusions)
             synth_main_msg = [
-                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one highly detailed, comprehensive answer that addresses the Main Criterion. YOU MUST RETAIN all critical evidence, quotes, and nuance from the sub-evaluations. Do NOT summarize them into a short paragraph; write an exhaustive, in-depth evaluation.'},
+                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one highly detailed, comprehensive answer that addresses the Main Criterion. YOU MUST RETAIN all critical evidence, quotes, and nuance from the sub-evaluations. Do NOT summarize them into a short paragraph; write an exhaustive, in-depth evaluation. Finally, strictly follow any formatting constraints or special requirements mentioned within the Main Criterion text itself.'},
                 {'role': 'user', 'content': f"Main Criterion:\n{main_criterion}\n\nSub-evaluations to synthesize:\n{all_sub_text}"}
             ]
             main_conclusion = llm_chat(synth_main_msg, temperature=0.0)
-            verified_main_conclusions.append(f"### Evaluation for:\n{main_criterion}\n\n{main_conclusion}\n")
+            
+            # Format the output header properly based on the criterion title
+            criterion_title = main_criterion.strip().split('\n')[0]
+            if not criterion_title.startswith('#'):
+                criterion_title = f"## {criterion_title}"
+            verified_main_conclusions.append(f"{criterion_title}\n\n{main_conclusion}\n")
             
             # Save Main Criterion Trace
             main_trace_file = os.path.join(steps_dir, f"criterion_{c_idx}_summary.md")
