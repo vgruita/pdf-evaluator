@@ -469,7 +469,7 @@ def process_indepth_evaluation_task(task):
             log_and_update(f"Step 1.5: Synthesizing sub-criteria for '{main_criterion[:40]}'...")
             all_sub_text = "\n\n".join(verified_sub_conclusions)
             synth_main_msg = [
-                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one highly detailed, comprehensive answer that addresses the Main Criterion. YOU MUST RETAIN all critical evidence, quotes, and nuance from the sub-evaluations. Do NOT summarize them into a short paragraph; write an exhaustive, in-depth evaluation. Finally, strictly follow any formatting constraints or special requirements mentioned within the Main Criterion text itself.'},
+                {'role': 'system', 'content': 'You are a professional grant reviewer. Synthesize the provided sub-evaluations into one comprehensive answer that addresses the Main Criterion. By default, YOU MUST RETAIN critical evidence and write an exhaustive, in-depth evaluation. HOWEVER, if the Main Criterion text explicitly requests a brief answer, a strict word limit, or a specific format (e.g., a single score), you MUST override the "exhaustive" rule and strictly obey those specific constraints.'},
                 {'role': 'user', 'content': f"Main Criterion:\n{main_criterion}\n\nSub-evaluations to synthesize:\n{all_sub_text}"}
             ]
             main_conclusion = llm_chat(synth_main_msg, temperature=0.0)
